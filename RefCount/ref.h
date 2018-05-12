@@ -8,7 +8,7 @@ using std::endl;
 #define SAFE_DELETE(P)		{if(P) {delete (P); (P) = NULL;}}
 #define SAFE_RELEASE(P)		{if(P) {(P)->Release(); (P) = NULL;}}
 
-//引用计数器
+// 计数器（用于引用计数）
 class Ref
 {
 protected:
@@ -43,7 +43,7 @@ int Ref::GetCount() const
 	return count;
 }
 
-//带指针变量的引用计数器
+// 带数据指针的引用计数器
 template <typename T>
 class RefPTR :public Ref
 {
@@ -53,6 +53,8 @@ public:
 	RefPTR();
 	RefPTR(T *ptr);
 	~RefPTR();
+
+	inline void unref();
 
 	void Release();
 	void ReleaseData();
@@ -65,7 +67,7 @@ public:
 template<typename T>
 RefPTR<T>::RefPTR() :p(NULL)
 {
-	count = 0;//此处设为0、1都有道理，都应该不会崩溃（建议初始化为0，以0表示无引用状态）
+	count = 0;// 此处设为0、1都有道理，都应该不会崩溃（建议初始化为0，以0表示无引用状态）
 }
 
 template<typename T>
@@ -81,10 +83,18 @@ RefPTR<T>::~RefPTR()
 }
 
 template<typename T>
+inline void RefPTR<T>::unref()
+{
+	Ref::unref();
+	if (count == 0)
+		Release();
+}
+
+template<typename T>
 void RefPTR<T>::Release()
 {
 	SAFE_DELETE(p);// TODO:数据通用清除
-	count = 0;// TODO:是否需要
+	count = 0;
 }
 
 template<typename T>
@@ -114,12 +124,12 @@ inline T * RefPTR<T>::GetData() const
 template<typename T>
 inline bool RefPTR<T>::IsNull() const
 {
+	// 数据指针为空，且引用计数为 0
 	return (p == NULL && count == 0);
 }
 
 
 //引用计数"示例类"
-//用法：对SMARTPOINTER模板特例化
 //【对类内封装的指针进行引用计数，计数规则如下】
 //【同理可适用于对类对象指针进行引用计数（不使用类封装计数逻辑，仅封装计数值和指针等内容，用户代码操作计数）的情况，如LPDIRECT3DDEVICE9】
 //【注意：两种引用计数实现方法不可混用！除非类内设置不同处理模式】
@@ -131,7 +141,7 @@ inline bool RefPTR<T>::IsNull() const
 //									=1(仅自身一份拷贝)：释放变量，新建指针，赋值
 //			     [覆盖赋值]释放变量，新建指针，赋值
 //4.SetData函数：同一个T*指针只能给一个对象设置，不能重复使用
-//由于SMARTPOINTER直接封装了目标对象指针，在SetData时只能建立副本（写时拷贝），无法共享对象数据（可以转为2级指针）
+//SMARTPOINTER直接封装了目标对象指针（而不是封装在Ref中形成总体2级指针），所以在SetData时只能建立副本（写时拷贝），无法修改全体同源引用的数据
 //而SMARTPOINTER2在SetData时既能写时拷贝，又可以全局赋值，因为它将目标对象指针和引用计数封装在一个类内指针里。
 //
 //【对于SMARTPOINTER两个类的使用】，有两种方法：1，直接用类对象。2，使用指针形式
@@ -144,9 +154,9 @@ template <typename T>
 class SMARTPOINTER
 {
 private:
-	Ref *pRef;	//计数器（必须设为指针，使对引用同一指针的多个类对象可共享）
-	T *p;		//引用计数的指针对象
-	//可添加其他成员
+	Ref *pRef;	// 计数器（设为指针，使对引用同一指针的多个类对象可共享）
+	T *p;		// 引用计数的指针对象
+	// 可添加其他成员
 public:
 					SMARTPOINTER();
 					SMARTPOINTER(T *ptr);
@@ -155,8 +165,8 @@ public:
 
 	void			Release();
 	SMARTPOINTER&	operator = (const SMARTPOINTER<T>&);
-	T&				operator*();
-	T*				operator->();
+	T&				operator * ();
+	T*				operator -> ();
 
 	inline int		GetRefCount();
 	inline const T* GetDataConst();//获得计数的指针
@@ -168,7 +178,7 @@ public:
 							cout << this << " ";			\
 							cout << (STR);					\
 							cout << ": ref:";				\
-							if (pRef)						\
+							if (pRef != NULL)				\
 								cout << pRef->GetCount();	\
 							else							\
 								cout << "NULL PTR";			\
@@ -187,7 +197,7 @@ template<typename T>
 inline SMARTPOINTER<T>::SMARTPOINTER(T * ptr)
 {
 	pRef = new Ref();
-	if (pRef)
+	if (pRef != NULL)
 	{
 		pRef->addref();
 		p = ptr;
@@ -201,26 +211,26 @@ inline SMARTPOINTER<T>::SMARTPOINTER(T * ptr)
 template<typename T>
 SMARTPOINTER<T>::SMARTPOINTER(const SMARTPOINTER<T>& obj)
 {
-	//添加判断，防止外部将类对象本身作为拷贝构造函数参数
-	if (&obj != NULL && (this != &obj))//TODO:后半个判断是否需要？
+	// 添加判断，防止外部将类对象本身作为拷贝构造函数参数
+	if (&obj != NULL && (this != &obj))// TODO:后半个判断是否需要？
 	{
-		//右值引用计数加一
+		// 右操作数的引用计数加一
 		if (obj.pRef != NULL)
 		{
 			obj.pRef->addref();
-			//正确处理计数值。防止初始化对象引用为0，对象拷贝后release产生ref野指针
+			// 正确处理计数值。引用计数 0~2
 			if (obj.pRef->GetCount() == 1)
 				obj.pRef->addref();
 		}
 
-		//拷贝变量
-		//拷贝函数不考虑ref等指针变量空情况，类内部维护
+		// ref、数据指针 同源化
+		// 拷贝函数不考虑 ref 等指针变量空情况，类内部维护
 		pRef = obj.pRef;
 		p = obj.p;
 	}
 	else
 	{
-		//外部没提供，自己构造
+		// 外部没提供，自己构造
 		pRef = new Ref();
 		p = NULL;
 	}
@@ -247,38 +257,38 @@ void SMARTPOINTER<T>::Release()
 	{
 		pRef->unref();
 
-		if (pRef->GetCount() == 0)
-		{
-			SAFE_DELETE(p);
-		}
-		else
-		{
-			pRef = new Ref<T>();// 新建空ref，p 设为 NULL，脱离原来的引用
-			p = NULL;
-		}
+		// 舍弃的过程：封装到 Ref 类中
+		//if (pRef->GetCount() == 0)
+		//{
+		//	SAFE_DELETE(p);
+		//}
+
+		// 解除原引用绑定，同时设为 NULL
+		pRef = NULL;
+		p = NULL;
 	}
 	//TOCATCHEXCEPTION：pRef==NULL
 }
 
 template<typename T>
-SMARTPOINTER<T> & SMARTPOINTER<T>::operator=(const SMARTPOINTER<T>& obj)
+SMARTPOINTER<T> & SMARTPOINTER<T>::operator = (const SMARTPOINTER<T>& obj)
 {
 	if (this != &obj)
 	{
-		//右值引用计数加一
+		// 右操作数的引用计数加一
 		if (obj.pRef != NULL)
 		{
 			obj.pRef->addref();
-			//正确处理计数值。防未初始化对象引用为0，对象拷贝后release产生ref野指针
+			// 正确处理计数值。引用计数 0~2
 			if (obj.pRef->GetCount() == 1)
 				obj.pRef->addref();
 		}
 
-		//自身引用释放（左值引用计数减一）
+		// 自身引用释放
 		Release();
 
-		//拷贝变量
-		//拷贝函数不考虑ref等指针变量空情况，类内部维护
+		// ref、数据指针 同源化
+		// 拷贝函数不考虑ref等指针变量空情况，类内部维护
 		pRef = obj.pRef;
 		p = obj.p;
 	}
@@ -291,13 +301,13 @@ SMARTPOINTER<T> & SMARTPOINTER<T>::operator=(const SMARTPOINTER<T>& obj)
 }
 
 template<typename T>
-inline T & SMARTPOINTER<T>::operator*()
+inline T & SMARTPOINTER<T>::operator * ()
 {
 	return *(p);
 }
 
 template<typename T>
-inline T * SMARTPOINTER<T>::operator->()
+inline T * SMARTPOINTER<T>::operator -> ()
 {
 	return p;
 }
@@ -317,7 +327,7 @@ inline T * SMARTPOINTER<T>::GetData()
 template<typename T>
 inline int SMARTPOINTER<T>::GetRefCount()
 {
-	if (pRef)
+	if (pRef != NULL)
 		return pRef->GetCount();
 	else
 		return -1;
@@ -337,25 +347,23 @@ inline bool SMARTPOINTER<T>::SetData(T * newp)
 	{
 		if (pRef->GetCount() > 1)
 		{
-			//T *p是SMARTPOINTER类内一维指针封装，只能进行写时拷贝，此时与其余引用分离开，引用回归1
-			pRef->unref();
-			pRef = new Ref();
-			if (pRef)
-			{
-				pRef->addref();
+			// T *p是SMARTPOINTER类内一维指针封装，只能进行写时拷贝
+			// 解除原引用，创建新引用，计数回归1
+			Release();
 
+			pRef = new Ref(1);
+			if (pRef！ = NULL)
 				p = newp;
-			}
 			else
 				return false;
 		}
-		else if (pRef->GetCount() == 1)//仅自身一份拷贝
+		else if (pRef->GetCount() == 1)// 仅自身一个引用
 		{
-			//清除旧的，赋值新的，其他变量不动
+			// 释放原数据，引用新数据
 			SAFE_DELETE(p);
 			p = newp;
 		}
-		else//ref.count == 0
+		else// pRef->count == 0
 		{
 			pRef->SetCount(1);
 				
@@ -366,8 +374,8 @@ inline bool SMARTPOINTER<T>::SetData(T * newp)
 	}
 	else
 	{
-		if (pRef->GetCount() == 0)//引用提升
-		{
+		if (pRef->GetCount() == 0)
+		{// 0 引用提升
 			pRef->SetCount(1);
 		}
 	}
@@ -376,37 +384,31 @@ inline bool SMARTPOINTER<T>::SetData(T * newp)
 }
 
 
-//智能指针：
-//#1处理内存泄漏
-//#2处理空悬指针
-//#3数据共享、保留1份资源
-//即控制对象生命周期，不在有引用的情况下被释放，并且保证引用为0时或智能指针类对象释放时被释放
-
+// 智能指针
 template <typename T>
 class SMARTPOINTER2
 {
 private:
-	RefPTR<T> *pRef;//计数器（必须设为指针，使对引用同一指针的多个类对象可共享）
-	//可添加其他成员
+	RefPTR<T> *pRef;// 计数器（设为指针，使各同源对象共享 RefPTR）
 public:
 	SMARTPOINTER2();
 	SMARTPOINTER2(T *ptr);
 	SMARTPOINTER2(const SMARTPOINTER2<T>&);
 	~SMARTPOINTER2();
 
-	void			Release();
+	void			Release();// 解除自身引用（可内部、外部调用）
 	SMARTPOINTER2&	Assign(const SMARTPOINTER2<T>&);
 	SMARTPOINTER2&	Assign(const SMARTPOINTER2<T>*);
 	SMARTPOINTER2&	operator = (const SMARTPOINTER2<T>&);
-	T&				operator*();
-	T*				operator->();
+	T&				operator *();
+	T*				operator -> ();
 
 	inline int		GetRefCount() const;
-	inline bool		IsRefNull() const;//pRef是NULL或者引用计数=0，数据T* p=NULL
-	inline bool		IsDataNull() const;
-	inline const T*	GetDataConst() const;//获得计数的指针
-	inline T*		GetData() const;//获得计数的指针
-	bool			SetData(T *pinfo);//安全起见，一个T*指针只能给1个对象赋值
+	inline bool		IsRefNull() const;	// 判断引用为空
+	inline bool		IsDataNull() const;	// 判断数据为空
+	inline const T*	GetDataConst() const;// 获得数据指针
+	inline T*		GetData() const;	// 获得数据指针
+	bool			SetData(T *pinfo);	// 设置数据指针
 };
 
 template<typename T>
@@ -424,24 +426,24 @@ inline SMARTPOINTER2<T>::SMARTPOINTER2(T * ptr) :pRef(new RefPTR<T>(ptr))
 template<typename T>
 inline SMARTPOINTER2<T>::SMARTPOINTER2(const SMARTPOINTER2<T>& obj)
 {
-	//添加判断，防止外部将类对象本身作为拷贝构造函数参数
-	if (&obj != NULL && this != &obj)//TODO:后半个判断是否不需要？
+	// 添加判断，防止外部将类对象本身作为拷贝构造函数参数
+	if (&obj != NULL && this != &obj)// TODO:后半个判断是否不需要？
 	{
-		//右值引用计数加一
+		// 右操作数的引用计数加一
 		if (obj.pRef != NULL)
 		{
 			obj.pRef->addref();
-			//正确处理计数值。防止未初始化对象引用为0，对象拷贝后release产生ref野指针
+			// 正确处理计数值。引用计数 0~2
 			if (obj.pRef->GetCount() == 1)
 				obj.pRef->addref();
 		}
 
-		//拷贝变量
+		// ref 同源化
 		pRef = obj.pRef;
 	}
 	else
 	{
-		//外部没提供，自己构造
+		// 外部没提供，自己构造
 		pRef = new RefPTR<T>();
 	}
 }
@@ -458,13 +460,9 @@ inline void SMARTPOINTER2<T>::Release()
 	if (pRef != NULL)
 	{
 		pRef->unref();
-
-		if (pRef->GetCount() == 0)
-		{
-			pRef->Release();
-		}
-		else
-			pRef = new RefPTR<T>();// 新建空 ref，解除原来引用的绑定
+		
+		// 解除原引用绑定，同时设为 NULL
+		pRef = NULL;
 	}
 }
 
@@ -473,19 +471,19 @@ inline SMARTPOINTER2<T> & SMARTPOINTER2<T>::Assign(const SMARTPOINTER2<T>& obj)
 {
 	if (&obj != NULL && this != &obj)// TODO:前半个判断是否需要？
 	{
-		// 右值的引用计数加一
+		// 右操作数的引用计数加一
 		if (obj.pRef != NULL)
 		{
 			obj.pRef->addref();
-			//正确处理计数值。防止未初始化对象引用为0，对象拷贝后release产生ref野指针
+			// 正确处理计数值。引用计数 0~2
 			if (obj.pRef->GetCount() == 1)
 				obj.pRef->addref();
 		}
 
-		//自身引用释放（左值引用计数减一）
+		// 自身引用释放
 		Release();
 
-		//拷贝变量
+		// ref 同源化
 		pRef = obj.pRef;
 	}
 	return *this;
@@ -498,19 +496,19 @@ inline SMARTPOINTER2<T> & SMARTPOINTER2<T>::Assign(const SMARTPOINTER2<T>* obj)
 }
 
 template<typename T>
-inline SMARTPOINTER2<T> & SMARTPOINTER2<T>::operator=(const SMARTPOINTER2<T>& obj)
+inline SMARTPOINTER2<T> & SMARTPOINTER2<T>::operator = (const SMARTPOINTER2<T>& obj)
 {
 	return Assign(obj);
 }
 
 template<typename T>
-inline T & SMARTPOINTER2<T>::operator*()
+inline T & SMARTPOINTER2<T>::operator * ()
 {
 	return *(pRef->GetData());
 }
 
 template<typename T>
-inline T * SMARTPOINTER2<T>::operator->()
+inline T * SMARTPOINTER2<T>::operator -> ()
 {
 	return pRef->GetData();
 }
@@ -557,9 +555,9 @@ inline T * SMARTPOINTER2<T>::GetData() const
 template<typename T>
 inline bool SMARTPOINTER2<T>::SetData(T * newp)
 {
-	if (pRef == NULL)//ref没建立
+	if (pRef == NULL)// ref 没建立
 	{
-		pRef = new RefPTR<T>();//重新建立
+		pRef = new RefPTR<T>();// 重新建立 ref
 		if (pRef == NULL)
 			return false;
 	}
@@ -568,23 +566,25 @@ inline bool SMARTPOINTER2<T>::SetData(T * newp)
 	{
 		if (pRef->GetCount() > 1)
 		{
-			//写时拷贝，自身拷贝出一份新值，引用为1
-			/*pRef->unref();
+			// 如果用写时拷贝，必须进行 newp != pRef->GetData() 判断
+			// 否则，存在不同引用计数源包含同一数据源，一个计数源销毁数据而另一个计数访扔保持数据指针，危险情况
+			// 写时拷贝，自身拷贝出一份新值，引用为 1
+			/*Release();
 			pRef = new RefPTR<T>(newp);
 			if (pRef == NULL)
 				return false;*/
 
-			//[不使用拷贝]修改全局值，对所有引用者更改
+			// 修改全局值，对所有引用者更改
 			pRef->ReleaseData();
 			pRef->SetData(newp);
 		}
-		else if (pRef->GetCount() == 1)//仅自身一份拷贝
+		else if (pRef->GetCount() == 1)// 仅自身一个引用
 		{
-			//清除旧的，赋值新的，其他变量不动
+			// 释放原数据，引用新数据
 			pRef->ReleaseData();
 			pRef->SetData(newp);
 		}
-		else//pRef->count == 0
+		else// pRef->count == 0
 		{
 			pRef->SetCount(1);
 
@@ -595,8 +595,8 @@ inline bool SMARTPOINTER2<T>::SetData(T * newp)
 	}
 	else
 	{
-		if (pRef->GetCount() == 0)//引用提升
-		{
+		if (pRef->GetCount() == 0)
+		{// 0 引用提升
 			pRef->SetCount(1);
 		}
 	}
